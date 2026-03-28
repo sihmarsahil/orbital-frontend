@@ -1,0 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+    }
+    .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+    
+    .glass-panel {
+        @apply bg-white/60 dark:bg-black/40 backdrop-blur-xl border border-indigo-500/10 dark:border-white/10 shadow-xl dark:shadow-2xl transition-colors duration-500;
+    }
+}
+
+body {
+    @apply bg-slate-50 text-slate-900 dark:bg-[#030712] dark:text-[#e2e8f0] transition-colors duration-500;
+    margin: 0;
+    overflow-x: hidden;
+}
