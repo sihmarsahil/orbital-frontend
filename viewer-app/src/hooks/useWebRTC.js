@@ -31,7 +31,7 @@ export default function useWebRTC(roomId, passcode, mode, securityToggles = { mo
   const [fileChannel, setFileChannel] = useState(null);
 
   useEffect(() => {
-    const WEBSOCKET_URL = import.meta.env.VITE_WEBSOCKET_URL || 'http://localhost:3001';
+    const WEBSOCKET_URL = import.meta.env.VITE_WEBSOCKET_URL || 'https://orbital-backend-kfdf.onrender.com';
     const socket = io(WEBSOCKET_URL);
     socketRef.current = socket;
     window.__PRIMARY_SOCKET = socket;
