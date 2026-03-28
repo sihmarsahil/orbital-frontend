@@ -1,22 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
 
-const URL = 'https://orbital-backend-kfdf.onrender.com';
+const S_URL = 'https://orbital-backend-kfdf.onrender.com';
 
-const useWebRTC = (roomId, mode, passcode) => {
+export default function useWebRTC(roomId, mode, passcode) {
   const [status, setStatus] = useState('CONNECTING...');
   const socketRef = useRef(null);
   const peerRef = useRef(null);
   const streamRef = useRef(null);
-  const [fileChannel, setFileChannel] = useState(null);
 
   useEffect(() => {
-    const socket = io(URL, { transports: ['websocket', 'polling'] });
+    // Force polling first to bypass WebSocket block
+    const socket = io(S_URL, { 
+      transports: ['polling', 'websocket'],
+      upgrade: true,
+      reconnection: true
+    });
     socketRef.current = socket;
 
     socket.on('connect', () => {
+      console.log("Socket Connected! ✅");
       setStatus(`READY: ${mode.toUpperCase()}`);
       if (mode === 'host') socket.emit('create-room', { roomId, passcode });
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error("Connection Error:", err.message);
+      setStatus("RECONNECTING...");
     });
 
     const createPeer = (tid) => {
@@ -29,16 +39,17 @@ const useWebRTC = (roomId, mode, passcode) => {
       };
 
       pc.ontrack = (e) => {
-        const vid = document.getElementById('remote-video') || document.querySelector('video');
-        if (vid && e.streams[0]) {
-          vid.srcObject = e.streams[0];
-          vid.play().catch(() => console.log("Click to play"));
+        const v = document.getElementById('remote-video') || document.querySelector('video');
+        if (v && e.streams[0]) {
+          v.srcObject = e.streams[0];
+          v.play().catch(() => {});
         }
       };
       return pc;
     };
 
     socket.on('viewer-joined', async (vid) => {
+      console.log("Viewer Joined, starting capture...");
       const pc = createPeer(vid);
       peerRef.current = pc;
       try {
@@ -48,7 +59,7 @@ const useWebRTC = (roomId, mode, passcode) => {
         const o = await pc.createOffer();
         await pc.setLocalDescription(o);
         socket.emit('signal', { target: vid, type: 'offer', payload: o });
-      } catch (err) { console.error(err); }
+      } catch (err) { console.error("Capture failed", err); }
     });
 
     socket.on('signal', async (data) => {
@@ -66,7 +77,7 @@ const useWebRTC = (roomId, mode, passcode) => {
         } else if (type === 'candidate' && peerRef.current) {
           await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
         }
-      } catch (e) { console.error(e); }
+      } catch (e) { console.error("Signal error", e); }
     });
 
     return () => {
@@ -76,7 +87,5 @@ const useWebRTC = (roomId, mode, passcode) => {
     };
   }, [roomId, mode, passcode]);
 
-  return { status, socketRef, peerRef, fileChannel, setFileChannel };
-};
-
-export default useWebRTC;
+  return { status, socketRef, peerRef, fileChannel: null, setFileChannel: () => {} };
+}
