@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
 
-// 1. Sidha Render ka backend URL (Environment variable ki jhanjhat khatam)
 const WEBSOCKET_URL = 'https://orbital-backend-kfdf.onrender.com';
 
 export const useWebRTC = (roomId, mode, passcode) => {
@@ -12,7 +11,6 @@ export const useWebRTC = (roomId, mode, passcode) => {
     const streamRef = useRef(null);
 
     useEffect(() => {
-        // 2. Socket Connection Setup
         const socket = io(WEBSOCKET_URL, {
             transports: ['websocket', 'polling']
         });
@@ -29,13 +27,11 @@ export const useWebRTC = (roomId, mode, passcode) => {
             setStatus(`ERROR: ${msg}`);
         });
 
-        // 3. WebRTC Peer Connection with GOOGLE STUN SERVERS (Zaroori for Cloud)
         const createPeer = (targetId) => {
             const pc = new RTCPeerConnection({
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' }
+                    { urls: 'stun:stun1.l.google.com:19302' }
                 ]
             });
 
@@ -53,14 +49,12 @@ export const useWebRTC = (roomId, mode, passcode) => {
             return pc;
         };
 
-        // Signaling Logic
         socket.on('viewer-joined', async (viewerId) => {
             const pc = createPeer(viewerId);
             peerRef.current = pc;
-
-            // Get Screen/Camera Stream
             try {
                 const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                streamRef.current = stream;
                 stream.getTracks().forEach(track => pc.addTrack(track, stream));
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
@@ -79,17 +73,25 @@ export const useWebRTC = (roomId, mode, passcode) => {
                 await pc.setLocalDescription(answer);
                 socket.emit('signal', { target: sender, type: 'answer', payload: answer });
             } else if (type === 'answer') {
-                await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload));
+                if (peerRef.current) await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload));
             } else if (type === 'candidate') {
-                await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
+                if (peerRef.current) await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
             }
         });
 
         return () => {
             socket.disconnect();
             if (peerRef.current) peerRef.current.close();
+            if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
         };
     }, [roomId, mode, passcode]);
 
-    return { status };
+    // Build fix: Sari wo cheezein return karo jo components maang rahe hain
+    return { 
+        status, 
+        socketRef, 
+        peerRef, 
+        fileChannel, 
+        setFileChannel 
+    };
 };
