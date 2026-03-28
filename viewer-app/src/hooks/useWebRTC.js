@@ -17,6 +17,7 @@ const useWebRTC = (roomId, mode, passcode) => {
         socketRef.current = socket;
 
         socket.on('connect', () => {
+            console.log("Socket Connected ✅");
             setStatus(`CONNECTED. ROLE: ${mode.toUpperCase()}`);
             if (mode === 'host') {
                 socket.emit('create-room', { roomId, passcode });
@@ -41,32 +42,46 @@ const useWebRTC = (roomId, mode, passcode) => {
                 }
             };
 
+            // VIEWER SIDE: Jab video stream aaye
             pc.ontrack = (event) => {
-                const remoteVideo = document.getElementById('remote-video');
-                if (remoteVideo) remoteVideo.srcObject = event.streams[0];
+                console.log("STREAM RECEIVED FROM HOST! 🎥");
+                const remoteVideo = document.getElementById('remote-video') || document.querySelector('video');
+                if (remoteVideo) {
+                    remoteVideo.srcObject = event.streams[0];
+                    // Autoplay fix: browser block na kare
+                    remoteVideo.play().catch(e => console.warn("Autoplay blocked, user must click first."));
+                }
             };
 
             return pc;
         };
 
         socket.on('viewer-joined', async (viewerId) => {
+            console.log("Viewer detected, starting screen capture...");
             const pc = createPeer(viewerId);
             peerRef.current = pc;
             try {
-                const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                // Screen Capture Options
+                const stream = await navigator.mediaDevices.getDisplayMedia({ 
+                    video: { cursor: "always" }, 
+                    audio: true 
+                });
                 streamRef.current = stream;
                 stream.getTracks().forEach(track => pc.addTrack(track, stream));
+                
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 socket.emit('signal', { target: viewerId, type: 'offer', payload: offer });
+                console.log("Offer sent to viewer");
             } catch (err) {
-                console.error("Media Error:", err);
+                console.error("Screen Capture Error:", err);
             }
         });
 
         socket.on('signal', async ({ sender, type, payload }) => {
             try {
                 if (type === 'offer') {
+                    console.log("Offer received, creating answer...");
                     const pc = createPeer(sender);
                     peerRef.current = pc;
                     await pc.setRemoteDescription(new RTCSessionDescription(payload));
@@ -74,11 +89,12 @@ const useWebRTC = (roomId, mode, passcode) => {
                     await pc.setLocalDescription(answer);
                     socket.emit('signal', { target: sender, type: 'answer', payload: answer });
                 } else if (type === 'answer' && peerRef.current) {
+                    console.log("Answer received, connection establishing...");
                     await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload));
                 } else if (type === 'candidate' && peerRef.current) {
                     await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) { console.error("Signaling error:", e); }
         });
 
         return () => {
@@ -91,5 +107,4 @@ const useWebRTC = (roomId, mode, passcode) => {
     return { status, socketRef, peerRef, fileChannel, setFileChannel };
 };
 
-// YAHI MISSING THA:
 export default useWebRTC;
