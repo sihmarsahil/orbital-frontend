@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
 
-const S_URL = 'https://orbital-backend-kfdf.onrender.com';
+const URL = 'https://orbital-backend-kfdf.onrender.com';
 
-export default function useWebRTC(roomId, mode, passcode) {
+const useWebRTC = (roomId, mode, passcode) => {
   const [status, setStatus] = useState('CONNECTING...');
-  const [fileChannel, setFileChannel] = useState(null);
   const socketRef = useRef(null);
   const peerRef = useRef(null);
   const streamRef = useRef(null);
+  const [fileChannel, setFileChannel] = useState(null);
 
   useEffect(() => {
-    const socket = io(S_URL, { transports: ['websocket', 'polling'] });
+    const socket = io(URL, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('connect', () => {
@@ -19,7 +19,7 @@ export default function useWebRTC(roomId, mode, passcode) {
       if (mode === 'host') socket.emit('create-room', { roomId, passcode });
     });
 
-    const makePeer = (tid) => {
+    const createPeer = (tid) => {
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
@@ -29,17 +29,17 @@ export default function useWebRTC(roomId, mode, passcode) {
       };
 
       pc.ontrack = (e) => {
-        const v = document.getElementById('remote-video') || document.querySelector('video');
-        if (v && e.streams[0]) {
-          v.srcObject = e.streams[0];
-          v.play().catch(() => {});
+        const vid = document.getElementById('remote-video') || document.querySelector('video');
+        if (vid && e.streams[0]) {
+          vid.srcObject = e.streams[0];
+          vid.play().catch(() => console.log("Click to play"));
         }
       };
       return pc;
     };
 
     socket.on('viewer-joined', async (vid) => {
-      const pc = makePeer(vid);
+      const pc = createPeer(vid);
       peerRef.current = pc;
       try {
         const s = await navigator.mediaDevices.getDisplayMedia({ video: true });
@@ -55,7 +55,7 @@ export default function useWebRTC(roomId, mode, passcode) {
       const { sender, type, payload } = data;
       try {
         if (type === 'offer') {
-          const pc = makePeer(sender);
+          const pc = createPeer(sender);
           peerRef.current = pc;
           await pc.setRemoteDescription(new RTCSessionDescription(payload));
           const a = await pc.createAnswer();
@@ -77,4 +77,6 @@ export default function useWebRTC(roomId, mode, passcode) {
   }, [roomId, mode, passcode]);
 
   return { status, socketRef, peerRef, fileChannel, setFileChannel };
-}
+};
+
+export default useWebRTC;
