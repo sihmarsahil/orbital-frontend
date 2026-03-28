@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
 
-const URL = 'https://orbital-backend-kfdf.onrender.com';
+const BACKEND_URL = 'https://orbital-backend-kfdf.onrender.com';
 
 const useWebRTC = (roomId, mode, passcode) => {
     const [status, setStatus] = useState('CONNECTING...');
@@ -11,47 +11,61 @@ const useWebRTC = (roomId, mode, passcode) => {
     const [fileChannel, setFileChannel] = useState(null);
 
     useEffect(() => {
-        const socket = io(URL, { transports: ['websocket', 'polling'] });
+        // Socket initialization with explicit settings
+        const socket = io(BACKEND_URL, { 
+            transports: ['websocket', 'polling'],
+            secure: true 
+        });
         socketRef.current = socket;
 
         socket.on('connect', () => {
-            setStatus(`CONNECTED: ${mode.toUpperCase()}`);
-            if (mode === 'host') socket.emit('create-room', { roomId, passcode });
+            setStatus(`READY: ${mode.toUpperCase()}`);
+            if (mode === 'host') {
+                socket.emit('create-room', { roomId, passcode });
+            }
         });
 
-        const createPeer = (tid) => {
+        const createPeer = (targetId) => {
             const pc = new RTCPeerConnection({
                 iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
             });
 
             pc.onicecandidate = (e) => {
-                if (e.candidate) socket.emit('signal', { target: tid, type: 'candidate', payload: e.candidate });
+                if (e.candidate) {
+                    socket.emit('signal', { target: targetId, type: 'candidate', payload: e.candidate });
+                }
             };
 
             pc.ontrack = (e) => {
-                const vid = document.getElementById('remote-video') || document.querySelector('video');
-                if (vid) {
-                    vid.srcObject = e.streams[0];
-                    vid.play().catch(() => console.log("Click to play video"));
+                const videoElement = document.getElementById('remote-video') || document.querySelector('video');
+                if (videoElement && e.streams[0]) {
+                    videoElement.srcObject = e.streams[0];
+                    videoElement.play().catch(() => console.log("User interaction needed"));
                 }
             };
+
             return pc;
         };
 
-        socket.on('viewer-joined', async (vid) => {
-            const pc = createPeer(vid);
+        socket.on('viewer-joined', async (viewerId) => {
+            const pc = createPeer(viewerId);
             peerRef.current = pc;
+            
             try {
-                // Ekdam simple constraints for Safari/Chrome
-                const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                streamRef.current = stream;
-                stream.getTracks().forEach(t => pc.addTrack(t, stream));
+                // Simplified constraints to avoid browser-specific TypeErrors
+                const stream = await navigator.mediaDevices.getDisplayMedia({ 
+                    video: true, 
+                    audio: false 
+                });
                 
+                streamRef.current = stream;
+                stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
-                socket.emit('signal', { target: vid, type: 'offer', payload: offer });
+                socket.emit('signal', { target: viewerId, type: 'offer', payload: offer });
             } catch (err) {
-                console.error("Capture Failed", err);
+                console.error("Screen Share Denied:", err);
             }
         });
 
@@ -61,15 +75,17 @@ const useWebRTC = (roomId, mode, passcode) => {
                     const pc = createPeer(sender);
                     peerRef.current = pc;
                     await pc.setRemoteDescription(new RTCSessionDescription(payload));
-                    const ans = await pc.createAnswer();
-                    await pc.setLocalDescription(ans);
-                    socket.emit('signal', { target: sender, type: 'answer', payload: ans });
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    socket.emit('signal', { target: sender, type: 'answer', payload: answer });
                 } else if (type === 'answer' && peerRef.current) {
                     await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload));
                 } else if (type === 'candidate' && peerRef.current) {
                     await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                console.error("Signaling error", e);
+            }
         });
 
         return () => {
