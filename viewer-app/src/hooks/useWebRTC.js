@@ -3,7 +3,7 @@ import io from 'socket.io-client';
 
 const WEBSOCKET_URL = 'https://orbital-backend-kfdf.onrender.com';
 
-export const useWebRTC = (roomId, mode, passcode) => {
+const useWebRTC = (roomId, mode, passcode) => {
     const [status, setStatus] = useState('CONNECTING...');
     const [fileChannel, setFileChannel] = useState(null);
     const socketRef = useRef(null);
@@ -65,33 +65,31 @@ export const useWebRTC = (roomId, mode, passcode) => {
         });
 
         socket.on('signal', async ({ sender, type, payload }) => {
-            if (type === 'offer') {
-                const pc = createPeer(sender);
-                peerRef.current = pc;
-                await pc.setRemoteDescription(new RTCSessionDescription(payload));
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                socket.emit('signal', { target: sender, type: 'answer', payload: answer });
-            } else if (type === 'answer') {
-                if (peerRef.current) await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload));
-            } else if (type === 'candidate') {
-                if (peerRef.current) await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
-            }
+            try {
+                if (type === 'offer') {
+                    const pc = createPeer(sender);
+                    peerRef.current = pc;
+                    await pc.setRemoteDescription(new RTCSessionDescription(payload));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    socket.emit('signal', { target: sender, type: 'answer', payload: answer });
+                } else if (type === 'answer' && peerRef.current) {
+                    await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload));
+                } else if (type === 'candidate' && peerRef.current) {
+                    await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
+                }
+            } catch (e) { console.error(e); }
         });
 
         return () => {
-            socket.disconnect();
+            if (socket) socket.disconnect();
             if (peerRef.current) peerRef.current.close();
             if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
         };
     }, [roomId, mode, passcode]);
 
-    // Build fix: Sari wo cheezein return karo jo components maang rahe hain
-    return { 
-        status, 
-        socketRef, 
-        peerRef, 
-        fileChannel, 
-        setFileChannel 
-    };
+    return { status, socketRef, peerRef, fileChannel, setFileChannel };
 };
+
+// YAHI MISSING THA:
+export default useWebRTC;
