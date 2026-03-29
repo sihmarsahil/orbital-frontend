@@ -13,7 +13,7 @@ export default function Viewer({ roomId, passcode, isDark, toggleTheme }) {
   const fileInputRef = useRef(null);
   const [chatOpen, setChatOpen] = useState(false);
   
-  const { status, remoteStream, metrics, fileChannel, chatMessages, sendChatMessage, isReceivingVoice, sendVoiceMessage } = useWebRTC(roomId, passcode, 'viewer');
+  const { status, remoteStream, metrics, fileChannel, chatMessages, sendChatMessage, isReceivingVoice, sendVoiceMessage } = useWebRTC(roomId, 'viewer', passcode);
 
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
