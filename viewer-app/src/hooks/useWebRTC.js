@@ -39,7 +39,17 @@ const useWebRTC = (roomId, mode, passcode) => {
       const pc = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { 
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          { 
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
         ]
       });
 
@@ -50,20 +60,21 @@ const useWebRTC = (roomId, mode, passcode) => {
       };
 
       pc.oniceconnectionstatechange = () => {
-        console.log("ICE Connection State:", pc.iceConnectionState);
+        console.log("ICE State:", pc.iceConnectionState);
         if (pc.iceConnectionState === 'connected') {
           setStatus('CONNECTED ✅');
         } else if (pc.iceConnectionState === 'failed') {
-          setStatus('CONNECTION FAILED');
+          setStatus('CONNECTION FAILED - Try different network');
         }
       };
 
       pc.ontrack = (event) => {
-        console.log("Stream received on Viewer!");
+        console.log("🎥 Stream received on Viewer!");
+        setStatus('STREAMING LIVE ✅');
         const videoElement = document.getElementById('remote-video');
         if (videoElement && event.streams[0]) {
           videoElement.srcObject = event.streams[0];
-          videoElement.play().catch(() => console.log("Auto-play blocked"));
+          videoElement.play().catch(e => console.log("Play error:", e));
         }
       };
 
@@ -71,7 +82,7 @@ const useWebRTC = (roomId, mode, passcode) => {
     };
 
     socket.on('viewer-joined', async (viewerId) => {
-      console.log("Viewer detected, capturing screen...");
+      console.log("👁️ Viewer detected, capturing screen...");
       setStatus("CAPTURING SCREEN...");
       
       const pc = createPeer(viewerId);
@@ -88,7 +99,7 @@ const useWebRTC = (roomId, mode, passcode) => {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         socket.emit('signal', { target: viewerId, type: 'offer', payload: offer });
-        console.log("Offer sent.");
+        console.log("📤 Offer sent.");
         setStatus("WAITING FOR VIEWER...");
       } catch (err) {
         console.error("Screen Capture Failed:", err);
@@ -100,7 +111,7 @@ const useWebRTC = (roomId, mode, passcode) => {
       const { sender, type, payload } = data;
       try {
         if (type === 'offer') {
-          console.log("Offer received.");
+          console.log("📥 Offer received.");
           const pc = createPeer(sender);
           peerRef.current = pc;
           await pc.setRemoteDescription(new RTCSessionDescription(payload));
@@ -109,7 +120,7 @@ const useWebRTC = (roomId, mode, passcode) => {
           socket.emit('signal', { target: sender, type: 'answer', payload: answer });
           setStatus("CONNECTING...");
         } else if (type === 'answer' && peerRef.current) {
-          console.log("Answer received.");
+          console.log("📥 Answer received.");
           await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload));
         } else if (type === 'candidate' && peerRef.current) {
           await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
