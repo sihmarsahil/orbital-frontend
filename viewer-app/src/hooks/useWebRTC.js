@@ -1,229 +1,189 @@
 import { useEffect, useRef, useState } from 'react';
-import io from 'socket.io-client';
-
-const BACKEND_URL = 'https://orbital-backend-kfdf.onrender.com';
+import Peer from 'peerjs';
 
 const useWebRTC = (roomId, mode, passcode) => {
   const [status, setStatus] = useState('CONNECTING...');
-  const [fileChannel, setFileChannel] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
+  const [fileChannel, setFileChannel] = useState(null);
   const [metrics, setMetrics] = useState({ telemetry: { cpu: '0.00', ram: '0.00' } });
   const [chatMessages, setChatMessages] = useState([]);
   const [isReceivingVoice, setIsReceivingVoice] = useState(false);
   
-  const socketRef = useRef(null);
   const peerRef = useRef(null);
+  const callRef = useRef(null);
+  const connRef = useRef(null);
   const streamRef = useRef(null);
 
   const sendChatMessage = (msg) => {
-    if (socketRef.current) {
-      socketRef.current.emit('chat-message', { text: msg, timestamp: Date.now(), sender: mode });
+    if (connRef.current && connRef.current.open) {
+      connRef.current.send({ type: 'chat', text: msg, timestamp: Date.now() });
       setChatMessages(prev => [...prev, { text: msg, timestamp: Date.now(), isOwn: true }]);
     }
   };
 
   const sendVoiceMessage = (audioBlob) => {
-    if (socketRef.current) {
-      socketRef.current.emit('voice-message', { audio: audioBlob, timestamp: Date.now() });
+    if (connRef.current && connRef.current.open) {
+      connRef.current.send({ type: 'voice', audio: audioBlob, timestamp: Date.now() });
+      setIsReceivingVoice(true);
+      setTimeout(() => setIsReceivingVoice(false), 2000);
     }
   };
 
   useEffect(() => {
-    const socket = io(BACKEND_URL, { 
-      transports: ['polling', 'websocket'],
-      secure: true,
-      timeout: 20000,
-      reconnection: true,
-      reconnectionAttempts: 5
-    });
-    socketRef.current = socket;
-
-    socket.on('connect', () => {
-      console.log("✅ Socket Connected! Socket ID:", socket.id);
-      setStatus(`READY: ${mode.toUpperCase()}`);
-      
-      if (mode === 'host') {
-        socket.emit('create-room', { roomId, passcode });
-        console.log("📡 Host created room:", roomId);
-      } else if (mode === 'viewer') {
-        socket.emit('join-room', { roomId, passcode });
-        console.log("📡 Viewer joining room:", roomId);
-      }
-    });
-
-    socket.on('connect_error', (err) => {
-      console.error("❌ Socket Error:", err.message);
-      setStatus("RECONNECTING...");
-    });
-
-    socket.on('chat-message', (data) => {
-      if (data.sender !== mode) {
-        setChatMessages(prev => [...prev, { ...data, isOwn: false }]);
-      }
-    });
-
-    socket.on('voice-message', () => {
-      setIsReceivingVoice(true);
-      setTimeout(() => setIsReceivingVoice(false), 2000);
-    });
-
-    socket.on('telemetry', (data) => {
-      setMetrics({ telemetry: data });
-    });
-
-    socket.on('error', (msg) => {
-      console.error("❌ Server Error:", msg);
-      setStatus(`ERROR: ${msg}`);
-    });
-
-    const createPeer = (targetId) => {
-      const pc = new RTCPeerConnection({
+    // Create Peer with free default server
+    const peer = new Peer({
+      debug: 2,
+      config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          { urls: 'stun:stun.ekiga.net' },
-          { urls: 'stun:stun.ideasip.com' },
-          {
-            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-            username: 'webrtc',
-            credential: 'webrtc'
-          },
-          {
-            urls: 'turn:turn.anyfirewall.com:80?transport=udp',
-            username: 'webrtc',
-            credential: 'webrtc'
-          },
-          {
-            urls: 'turn:turn2.anyfirewall.com:443?transport=tcp',
-            username: 'webrtc',
-            credential: 'webrtc'
-          },
-          {
-            urls: 'turn:turn.nexstorm.net:3478',
-            username: 'webrtc',
-            credential: 'webrtc'
-          }
-        ],
-        iceCandidatePoolSize: 10
-      });
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+      }
+    });
+    
+    peerRef.current = peer;
 
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          console.log("📡 Sending ICE candidate");
-          socket.emit('signal', { target: targetId, type: 'candidate', payload: event.candidate });
-        }
-      };
-
-      pc.oniceconnectionstatechange = () => {
-        console.log("🔌 ICE Connection State:", pc.iceConnectionState);
-        if (pc.iceConnectionState === 'connected') {
-          setStatus('LIVE STREAMING ✅');
-        } else if (pc.iceConnectionState === 'failed') {
-          setStatus('CONNECTION FAILED - Try different network');
-          console.error("ICE Failed");
-        } else if (pc.iceConnectionState === 'checking') {
-          setStatus('CONNECTING...');
-        }
-      };
-
-      pc.onicegatheringstatechange = () => {
-        console.log("🔄 ICE Gathering State:", pc.iceGatheringState);
-      };
-
-      pc.onsignalingstatechange = () => {
-        console.log("📡 Signaling State:", pc.signalingState);
-      };
-
-      pc.ontrack = (event) => {
-        console.log("🎥 Stream received!", event.streams[0]);
-        if (event.streams && event.streams[0]) {
-          setRemoteStream(event.streams[0]);
-          setStatus('LIVE STREAMING ✅');
-        }
-      };
-
-      const dc = pc.createDataChannel('fileTransfer');
-      dc.onopen = () => {
-        console.log("📁 File channel opened");
-        setFileChannel(dc);
-        window.__PRIMARY_FILE_CHANNEL = dc;
-      };
-
-      return pc;
-    };
-
-    socket.on('viewer-joined', async (viewerId) => {
-      console.log("👁️ Viewer joined, capturing screen...");
-      setStatus("CAPTURING SCREEN...");
+    peer.on('open', (id) => {
+      console.log("✅ PeerJS connected! ID:", id);
+      setStatus(`READY: ${mode.toUpperCase()}`);
       
-      const pc = createPeer(viewerId);
-      peerRef.current = pc;
-      
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ 
-          video: true, 
-          audio: false 
+      if (mode === 'host') {
+        // Host waits for viewer to connect
+        setStatus(`WAITING FOR VIEWER... ROOM: ${roomId}`);
+      } else if (mode === 'viewer') {
+        // Viewer connects to host
+        setStatus("CONNECTING TO HOST...");
+        const conn = peer.connect(roomId);
+        connRef.current = conn;
+        
+        conn.on('open', () => {
+          console.log("🔗 Data connection opened with host");
+          setStatus("REQUESTING SCREEN...");
+          
+          // Call the host for screen share
+          const call = peer.call(roomId, null);
+          callRef.current = call;
+          
+          call.on('stream', (stream) => {
+            console.log("🎥 Received screen stream!");
+            setRemoteStream(stream);
+            setStatus("LIVE STREAMING ✅");
+          });
+          
+          call.on('error', (err) => {
+            console.error("Call error:", err);
+            setStatus("CONNECTION FAILED");
+          });
         });
-        streamRef.current = stream;
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('signal', { target: viewerId, type: 'offer', payload: offer });
-        console.log("📤 Offer sent");
-        setStatus("WAITING FOR VIEWER...");
-      } catch (err) {
-        console.error("❌ Screen capture failed:", err);
-        setStatus("SCREEN CAPTURE FAILED");
-      }
-    });
-
-    socket.on('signal', async (data) => {
-      const { sender, type, payload } = data;
-      console.log("📨 Signal received:", type);
-      
-      try {
-        if (type === 'offer') {
-          console.log("📥 Offer received");
-          const pc = createPeer(sender);
-          peerRef.current = pc;
-          
-          pc.ondatachannel = (event) => {
-            console.log("📁 Data channel received");
-            setFileChannel(event.channel);
-            window.__PRIMARY_FILE_CHANNEL = event.channel;
-          };
-          
-          await pc.setRemoteDescription(new RTCSessionDescription(payload));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          socket.emit('signal', { target: sender, type: 'answer', payload: answer });
-          setStatus("CONNECTING...");
-          
-        } else if (type === 'answer' && peerRef.current) {
-          console.log("📥 Answer received");
-          await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload));
-          
-        } else if (type === 'candidate' && peerRef.current) {
-          try {
-            await peerRef.current.addIceCandidate(new RTCIceCandidate(payload));
-          } catch (e) {
-            console.error("Error adding ICE candidate:", e);
+        
+        conn.on('data', (data) => {
+          if (data.type === 'chat') {
+            setChatMessages(prev => [...prev, { text: data.text, timestamp: data.timestamp, isOwn: false }]);
+          } else if (data.type === 'voice') {
+            setIsReceivingVoice(true);
+            setTimeout(() => setIsReceivingVoice(false), 2000);
+          } else if (data.type === 'telemetry') {
+            setMetrics({ telemetry: data.data });
           }
-        }
-      } catch (e) {
-        console.error("❌ Signaling error:", e);
+        });
+        
+        conn.on('error', (err) => {
+          console.error("Connection error:", err);
+          setStatus("CONNECTION FAILED - Wrong Room ID?");
+        });
       }
     });
+
+    // Host: Handle incoming connections
+    peer.on('connection', (conn) => {
+      console.log("📡 Viewer connected:", conn.peer);
+      connRef.current = conn;
+      
+      conn.on('data', (data) => {
+        if (data.type === 'chat') {
+          setChatMessages(prev => [...prev, { text: data.text, timestamp: data.timestamp, isOwn: false }]);
+        } else if (data.type === 'voice') {
+          setIsReceivingVoice(true);
+          setTimeout(() => setIsReceivingVoice(false), 2000);
+        }
+      });
+      
+      conn.on('open', () => {
+        console.log("Data channel ready");
+      });
+    });
+
+    // Host: Handle incoming calls (viewer requesting screen)
+    peer.on('call', (call) => {
+      console.log("📞 Viewer requesting screen share");
+      callRef.current = call;
+      
+      // Start screen capture
+      navigator.mediaDevices.getDisplayMedia({ 
+        video: true, 
+        audio: false 
+      }).then((stream) => {
+        streamRef.current = stream;
+        call.answer(stream);
+        setStatus("STREAMING LIVE ✅");
+        
+        call.on('stream', (remoteStream) => {
+          // This is for host if viewer also shares (not needed)
+          console.log("Remote stream received");
+        });
+        
+        call.on('close', () => {
+          console.log("Call ended");
+          setStatus("VIEWER DISCONNECTED");
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(t => t.stop());
+          }
+        });
+      }).catch((err) => {
+        console.error("Screen capture failed:", err);
+        setStatus("SCREEN CAPTURE FAILED - Allow permission");
+        call.close();
+      });
+    });
+
+    peer.on('error', (err) => {
+      console.error("Peer error:", err);
+      setStatus(`ERROR: ${err.type}`);
+    });
+
+    peer.on('disconnected', () => {
+      console.log("Peer disconnected");
+      setStatus("DISCONNECTED - Reconnecting...");
+      peer.reconnect();
+    });
+
+    // Send telemetry data (host only)
+    if (mode === 'host') {
+      const interval = setInterval(() => {
+        if (connRef.current && connRef.current.open) {
+          // Simulate CPU/RAM usage (replace with real metrics if needed)
+          const cpu = (Math.random() * 40 + 20).toFixed(1);
+          const ram = (Math.random() * 30 + 40).toFixed(1);
+          connRef.current.send({ 
+            type: 'telemetry', 
+            data: { cpu, ram } 
+          });
+        }
+      }, 2000);
+      
+      return () => {
+        clearInterval(interval);
+        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+        if (peerRef.current) peerRef.current.destroy();
+      };
+    }
 
     return () => {
-      console.log("🧹 Cleanup");
-      if (socketRef.current) socketRef.current.disconnect();
-      if (peerRef.current) peerRef.current.close();
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      if (callRef.current) callRef.current.close();
+      if (connRef.current) connRef.current.close();
+      if (peerRef.current) peerRef.current.destroy();
     };
   }, [roomId, mode, passcode]);
 
