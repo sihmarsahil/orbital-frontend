@@ -49,10 +49,8 @@ const useWebRTC = (roomId, mode, passcode) => {
       setStatus(`READY: ${mode.toUpperCase()}`);
       
       if (mode === 'host') {
-        // Host waits for viewer to connect
         setStatus(`WAITING FOR VIEWER... ROOM: ${roomId}`);
       } else if (mode === 'viewer') {
-        // Viewer connects to host
         setStatus("CONNECTING TO HOST...");
         const conn = peer.connect(roomId);
         connRef.current = conn;
@@ -61,7 +59,6 @@ const useWebRTC = (roomId, mode, passcode) => {
           console.log("🔗 Data connection opened with host");
           setStatus("REQUESTING SCREEN...");
           
-          // Call the host for screen share
           const call = peer.call(roomId, null);
           callRef.current = call;
           
@@ -95,7 +92,6 @@ const useWebRTC = (roomId, mode, passcode) => {
       }
     });
 
-    // Host: Handle incoming connections
     peer.on('connection', (conn) => {
       console.log("📡 Viewer connected:", conn.peer);
       connRef.current = conn;
@@ -114,12 +110,10 @@ const useWebRTC = (roomId, mode, passcode) => {
       });
     });
 
-    // Host: Handle incoming calls (viewer requesting screen)
     peer.on('call', (call) => {
       console.log("📞 Viewer requesting screen share");
       callRef.current = call;
       
-      // Start screen capture
       navigator.mediaDevices.getDisplayMedia({ 
         video: true, 
         audio: false 
@@ -129,7 +123,6 @@ const useWebRTC = (roomId, mode, passcode) => {
         setStatus("STREAMING LIVE ✅");
         
         call.on('stream', (remoteStream) => {
-          // This is for host if viewer also shares (not needed)
           console.log("Remote stream received");
         });
         
@@ -158,11 +151,9 @@ const useWebRTC = (roomId, mode, passcode) => {
       peer.reconnect();
     });
 
-    // Send telemetry data (host only)
     if (mode === 'host') {
       const interval = setInterval(() => {
         if (connRef.current && connRef.current.open) {
-          // Simulate CPU/RAM usage (replace with real metrics if needed)
           const cpu = (Math.random() * 40 + 20).toFixed(1);
           const ram = (Math.random() * 30 + 40).toFixed(1);
           connRef.current.send({ 
