@@ -6,9 +6,27 @@ const BACKEND_URL = 'https://orbital-backend-kfdf.onrender.com';
 const useWebRTC = (roomId, mode, passcode) => {
   const [status, setStatus] = useState('CONNECTING...');
   const [fileChannel, setFileChannel] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [metrics, setMetrics] = useState({ telemetry: null });
+  const [chatMessages, setChatMessages] = useState([]);
+  const [isReceivingVoice, setIsReceivingVoice] = useState(false);
+  
   const socketRef = useRef(null);
   const peerRef = useRef(null);
   const streamRef = useRef(null);
+
+  // Mock functions for chat and voice
+  const sendChatMessage = (msg) => {
+    if (socketRef.current) {
+      socketRef.current.emit('chat-message', { text: msg, timestamp: Date.now() });
+    }
+  };
+
+  const sendVoiceMessage = (audioBlob) => {
+    if (socketRef.current) {
+      socketRef.current.emit('voice-message', { audio: audioBlob, timestamp: Date.now() });
+    }
+  };
 
   useEffect(() => {
     const socket = io(BACKEND_URL, { 
@@ -35,7 +53,20 @@ const useWebRTC = (roomId, mode, passcode) => {
       setStatus("RECONNECTING...");
     });
 
-    const createPeer = (targetId) => {
+    socket.on('chat-message', (data) => {
+      setChatMessages(prev => [...prev, { ...data, isOwn: false }]);
+    });
+
+    socket.on('voice-message', (data) => {
+      setIsReceivingVoice(true);
+      setTimeout(() => setIsReceivingVoice(false), 2000);
+    });
+
+    socket.on('telemetry', (data) => {
+      setMetrics({ telemetry: data });
+    });
+
+    const createPeer = (targetId, isInitiator = false) => {
       const pc = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -62,20 +93,16 @@ const useWebRTC = (roomId, mode, passcode) => {
       pc.oniceconnectionstatechange = () => {
         console.log("ICE State:", pc.iceConnectionState);
         if (pc.iceConnectionState === 'connected') {
-          setStatus('CONNECTED ✅');
+          setStatus('LIVE - CONNECTED ✅');
         } else if (pc.iceConnectionState === 'failed') {
-          setStatus('CONNECTION FAILED - Try different network');
+          setStatus('CONNECTION FAILED');
         }
       };
 
       pc.ontrack = (event) => {
         console.log("🎥 Stream received on Viewer!");
-        setStatus('STREAMING LIVE ✅');
-        const videoElement = document.getElementById('remote-video');
-        if (videoElement && event.streams[0]) {
-          videoElement.srcObject = event.streams[0];
-          videoElement.play().catch(e => console.log("Play error:", e));
-        }
+        setRemoteStream(event.streams[0]);
+        setStatus('LIVE STREAMING ✅');
       };
 
       return pc;
@@ -85,7 +112,7 @@ const useWebRTC = (roomId, mode, passcode) => {
       console.log("👁️ Viewer detected, capturing screen...");
       setStatus("CAPTURING SCREEN...");
       
-      const pc = createPeer(viewerId);
+      const pc = createPeer(viewerId, true);
       peerRef.current = pc;
       
       try {
@@ -112,7 +139,7 @@ const useWebRTC = (roomId, mode, passcode) => {
       try {
         if (type === 'offer') {
           console.log("📥 Offer received.");
-          const pc = createPeer(sender);
+          const pc = createPeer(sender, false);
           peerRef.current = pc;
           await pc.setRemoteDescription(new RTCSessionDescription(payload));
           const answer = await pc.createAnswer();
@@ -142,7 +169,17 @@ const useWebRTC = (roomId, mode, passcode) => {
     };
   }, [roomId, mode, passcode]);
 
-  return { status, socketRef, peerRef, fileChannel, setFileChannel };
+  return { 
+    status, 
+    remoteStream, 
+    metrics, 
+    fileChannel, 
+    setFileChannel,
+    chatMessages,
+    sendChatMessage,
+    isReceivingVoice,
+    sendVoiceMessage
+  };
 };
 
 export default useWebRTC;
