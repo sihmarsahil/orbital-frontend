@@ -30,17 +30,7 @@ const useWebRTC = (roomId, mode, passcode) => {
   };
 
   useEffect(() => {
-    // Create Peer with free default server
-    const peer = new Peer({
-      debug: 2,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
-        ]
-      }
-    });
+    const peer = new Peer();
     
     peerRef.current = peer;
 
@@ -56,14 +46,14 @@ const useWebRTC = (roomId, mode, passcode) => {
         connRef.current = conn;
         
         conn.on('open', () => {
-          console.log("🔗 Data connection opened with host");
+          console.log("🔗 Connected to host");
           setStatus("REQUESTING SCREEN...");
           
           const call = peer.call(roomId, null);
           callRef.current = call;
           
           call.on('stream', (stream) => {
-            console.log("🎥 Received screen stream!");
+            console.log("🎥 Screen stream received!");
             setRemoteStream(stream);
             setStatus("LIVE STREAMING ✅");
           });
@@ -87,7 +77,7 @@ const useWebRTC = (roomId, mode, passcode) => {
         
         conn.on('error', (err) => {
           console.error("Connection error:", err);
-          setStatus("CONNECTION FAILED - Wrong Room ID?");
+          setStatus("CONNECTION FAILED");
         });
       }
     });
@@ -104,10 +94,6 @@ const useWebRTC = (roomId, mode, passcode) => {
           setTimeout(() => setIsReceivingVoice(false), 2000);
         }
       });
-      
-      conn.on('open', () => {
-        console.log("Data channel ready");
-      });
     });
 
     peer.on('call', (call) => {
@@ -122,10 +108,6 @@ const useWebRTC = (roomId, mode, passcode) => {
         call.answer(stream);
         setStatus("STREAMING LIVE ✅");
         
-        call.on('stream', (remoteStream) => {
-          console.log("Remote stream received");
-        });
-        
         call.on('close', () => {
           console.log("Call ended");
           setStatus("VIEWER DISCONNECTED");
@@ -135,7 +117,7 @@ const useWebRTC = (roomId, mode, passcode) => {
         });
       }).catch((err) => {
         console.error("Screen capture failed:", err);
-        setStatus("SCREEN CAPTURE FAILED - Allow permission");
+        setStatus("SCREEN CAPTURE FAILED");
         call.close();
       });
     });
@@ -143,12 +125,6 @@ const useWebRTC = (roomId, mode, passcode) => {
     peer.on('error', (err) => {
       console.error("Peer error:", err);
       setStatus(`ERROR: ${err.type}`);
-    });
-
-    peer.on('disconnected', () => {
-      console.log("Peer disconnected");
-      setStatus("DISCONNECTED - Reconnecting...");
-      peer.reconnect();
     });
 
     if (mode === 'host') {
