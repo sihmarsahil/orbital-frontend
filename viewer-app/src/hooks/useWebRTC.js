@@ -19,12 +19,16 @@ const useWebRTC = (roomId, mode, passcode) => {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log("Socket Connected! ✅");
-      setStatus(`READY: ${mode.toUpperCase()}`);
-      if (mode === 'host') {
-        socket.emit('create-room', { roomId, passcode });
-      }
-    });
+  console.log("Socket Connected! ✅");
+  setStatus(`READY: ${mode.toUpperCase()}`);
+  if (mode === 'host') {
+    socket.emit('create-room', { roomId, passcode });
+    console.log("Host created room:", roomId);
+  } else if (mode === 'viewer') {
+    socket.emit('join-room', { roomId, passcode });
+    console.log("Viewer trying to join room:", roomId);
+  }
+});
 
     socket.on('connect_error', (err) => {
       console.error("Socket Error:", err.message);
