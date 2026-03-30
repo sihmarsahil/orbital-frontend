@@ -1,165 +1,253 @@
-import { useEffect, useRef, useState } from 'react';
-import Peer from 'peerjs';
+import { useRef, useCallback, useEffect, useState } from 'react';
+import io from 'socket.io-client';
 
-const useWebRTC = (roomId, mode, passcode) => {
-  const [status, setStatus] = useState('CONNECTING...');
-  const [remoteStream, setRemoteStream] = useState(null);
-  const [fileChannel, setFileChannel] = useState(null);
-  const [metrics, setMetrics] = useState({ telemetry: { cpu: '0.00', ram: '0.00' } });
-  const [chatMessages, setChatMessages] = useState([]);
-  const [isReceivingVoice, setIsReceivingVoice] = useState(false);
-  
-  const peerRef = useRef(null);
-  const callRef = useRef(null);
-  const connRef = useRef(null);
-  const streamRef = useRef(null);
-
-  const sendChatMessage = (msg) => {
-    if (connRef.current && connRef.current.open) {
-      connRef.current.send({ type: 'chat', text: msg, timestamp: Date.now() });
-      setChatMessages(prev => [...prev, { text: msg, timestamp: Date.now(), isOwn: true }]);
+// ✅ ADD THIS ICE CONFIGURATION
+const ICE_SERVERS = {
+  iceServers: [
+    // STUN servers
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    
+    // FREE TURN servers (CRITICAL for different networks)
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
     }
-  };
-
-  const sendVoiceMessage = (audioBlob) => {
-    if (connRef.current && connRef.current.open) {
-      connRef.current.send({ type: 'voice', audio: audioBlob, timestamp: Date.now() });
-      setIsReceivingVoice(true);
-      setTimeout(() => setIsReceivingVoice(false), 2000);
-    }
-  };
-
-  useEffect(() => {
-    const peer = new Peer();
-    peerRef.current = peer;
-
-    peer.on('open', (id) => {
-      console.log("PeerJS connected:", id);
-      setStatus(`READY: ${mode.toUpperCase()}`);
-      
-      if (mode === 'host') {
-        setStatus(`WAITING FOR VIEWER - ROOM: ${roomId}`);
-      } else if (mode === 'viewer') {
-        setStatus("CONNECTING TO HOST...");
-        const conn = peer.connect(roomId);
-        connRef.current = conn;
-        
-        conn.on('open', () => {
-          console.log("Connected to host");
-          setStatus("REQUESTING SCREEN...");
-          
-          const call = peer.call(roomId, null);
-          callRef.current = call;
-          
-          call.on('stream', (stream) => {
-            console.log("Screen stream received!");
-            setRemoteStream(stream);
-            setStatus("LIVE STREAMING");
-          });
-          
-          call.on('error', (err) => {
-            console.error("Call error:", err);
-            setStatus("CONNECTION FAILED");
-          });
-        });
-        
-        conn.on('data', (data) => {
-          if (data.type === 'chat') {
-            setChatMessages(prev => [...prev, { text: data.text, timestamp: data.timestamp, isOwn: false }]);
-          } else if (data.type === 'voice') {
-            setIsReceivingVoice(true);
-            setTimeout(() => setIsReceivingVoice(false), 2000);
-          } else if (data.type === 'telemetry') {
-            setMetrics({ telemetry: data.data });
-          }
-        });
-        
-        conn.on('error', (err) => {
-          console.error("Connection error:", err);
-          setStatus("CONNECTION FAILED");
-        });
-      }
-    });
-
-    peer.on('connection', (conn) => {
-      console.log("Viewer connected:", conn.peer);
-      connRef.current = conn;
-      
-      conn.on('data', (data) => {
-        if (data.type === 'chat') {
-          setChatMessages(prev => [...prev, { text: data.text, timestamp: data.timestamp, isOwn: false }]);
-        } else if (data.type === 'voice') {
-          setIsReceivingVoice(true);
-          setTimeout(() => setIsReceivingVoice(false), 2000);
-        }
-      });
-    });
-
-    peer.on('call', (call) => {
-      console.log("Screen share requested");
-      callRef.current = call;
-      
-      navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
-        .then((stream) => {
-          streamRef.current = stream;
-          call.answer(stream);
-          setStatus("STREAMING LIVE");
-          
-          call.on('close', () => {
-            console.log("Call ended");
-            setStatus("VIEWER DISCONNECTED");
-            if (streamRef.current) {
-              streamRef.current.getTracks().forEach(t => t.stop());
-            }
-          });
-        })
-        .catch((err) => {
-          console.error("Screen capture failed:", err);
-          setStatus("SCREEN CAPTURE FAILED");
-          call.close();
-        });
-    });
-
-    peer.on('error', (err) => {
-      console.error("Peer error:", err);
-      setStatus(`ERROR: ${err.type}`);
-    });
-
-    if (mode === 'host') {
-      const interval = setInterval(() => {
-        if (connRef.current && connRef.current.open) {
-          const cpu = (Math.random() * 40 + 20).toFixed(1);
-          const ram = (Math.random() * 30 + 40).toFixed(1);
-          connRef.current.send({ type: 'telemetry', data: { cpu, ram } });
-        }
-      }, 2000);
-      
-      return () => {
-        clearInterval(interval);
-        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-        if (peerRef.current) peerRef.current.destroy();
-      };
-    }
-
-    return () => {
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-      if (callRef.current) callRef.current.close();
-      if (connRef.current) connRef.current.close();
-      if (peerRef.current) peerRef.current.destroy();
-    };
-  }, [roomId, mode, passcode]);
-
-  return { 
-    status, 
-    remoteStream, 
-    metrics, 
-    fileChannel, 
-    setFileChannel,
-    chatMessages,
-    sendChatMessage,
-    isReceivingVoice,
-    sendVoiceMessage
-  };
+  ],
+  iceCandidatePoolSize: 10
 };
 
-export default useWebRTC;
+export const useWebRTC = (roomId, isHost = false) => {
+  const peerConnectionRef = useRef(null);
+  const dataChannelRef = useRef(null);
+  const socketRef = useRef(null);
+  const [connectionState, setConnectionState] = useState('new');
+  const [dataChannelState, setDataChannelState] = useState('closed');
+
+  // Initialize peer connection
+  const initPeerConnection = useCallback(() => {
+    // ✅ Use updated ICE servers
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    
+    // Monitor connection state
+    pc.onconnectionstatechange = () => {
+      console.log('Connection state:', pc.connectionState);
+      setConnectionState(pc.connectionState);
+      
+      if (pc.connectionState === 'failed') {
+        console.error('Connection failed! Check network/TURN servers');
+      }
+    };
+    
+    pc.oniceconnectionstatechange = () => {
+      console.log('ICE state:', pc.iceConnectionState);
+    };
+    
+    pc.onicegatheringstatechange = () => {
+      console.log('ICE gathering:', pc.iceGatheringState);
+    };
+    
+    // ICE candidate handler
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current) {
+        socketRef.current.emit('ice-candidate', {
+          candidate: event.candidate,
+          roomId: roomId
+        });
+      }
+    };
+    
+    // ✅ For HOST: Create data channel
+    if (isHost) {
+      try {
+        const dataChannel = pc.createDataChannel('chat');
+        dataChannelRef.current = dataChannel;
+        
+        dataChannel.onopen = () => {
+          console.log('✅ Data channel OPEN (Host)');
+          setDataChannelState('open');
+        };
+        
+        dataChannel.onclose = () => {
+          console.log('Data channel closed');
+          setDataChannelState('closed');
+        };
+        
+        dataChannel.onerror = (error) => {
+          console.error('Data channel error:', error);
+        };
+        
+        dataChannel.onmessage = (event) => {
+          console.log('Message received:', event.data);
+          // Handle incoming messages
+        };
+      } catch (error) {
+        console.error('Error creating data channel:', error);
+      }
+    }
+    
+    // ✅ For VIEWER: Handle incoming data channel
+    if (!isHost) {
+      pc.ondatachannel = (event) => {
+        console.log('📡 Data channel received!');
+        const channel = event.channel;
+        dataChannelRef.current = channel;
+        
+        channel.onopen = () => {
+          console.log('✅ Data channel OPEN (Viewer)');
+          setDataChannelState('open');
+        };
+        
+        channel.onclose = () => {
+          console.log('Data channel closed');
+          setDataChannelState('closed');
+        };
+        
+        channel.onerror = (error) => {
+          console.error('Data channel error:', error);
+        };
+        
+        channel.onmessage = (event) => {
+          console.log('Message received:', event.data);
+          // Handle messages
+        };
+      };
+    }
+    
+    // Track handler for receiving streams
+    pc.ontrack = (event) => {
+      console.log('Track received:', event.track.kind);
+    };
+    
+    peerConnectionRef.current = pc;
+    return pc;
+  }, [roomId, isHost]);
+
+  // Send message function
+  const sendMessage = useCallback((message) => {
+    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+      dataChannelRef.current.send(message);
+      return true;
+    } else {
+      console.warn('Data channel not ready. State:', dataChannelRef.current?.readyState);
+      return false;
+    }
+  }, []);
+
+  // Send file function
+  const sendFile = useCallback((file) => {
+    return new Promise((resolve, reject) => {
+      if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const fileData = {
+            type: 'file',
+            name: file.name,
+            size: file.size,
+            data: e.target.result
+          };
+          dataChannelRef.current.send(JSON.stringify(fileData));
+          resolve(true);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      } else {
+        reject(new Error('Data channel not ready'));
+      }
+    });
+  }, []);
+
+  // Create offer (Host)
+  const createOffer = useCallback(async () => {
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
+    
+    try {
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      await pc.setLocalDescription(offer);
+      
+      // Wait for ICE gathering
+      await waitForIceGathering(pc);
+      
+      return pc.localDescription;
+    } catch (error) {
+      console.error('Error creating offer:', error);
+      throw error;
+    }
+  }, []);
+
+  // Helper to wait for ICE gathering
+  const waitForIceGathering = (pc) => {
+    return new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve();
+      } else {
+        const checkState = () => {
+          if (pc.iceGatheringState === 'complete') {
+            pc.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        pc.addEventListener('icegatheringstatechange', checkState);
+        setTimeout(resolve, 5000); // Timeout after 5 seconds
+      }
+    });
+  };
+
+  // Create answer (Viewer)
+  const createAnswer = useCallback(async () => {
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
+    
+    try {
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      return answer;
+    } catch (error) {
+      console.error('Error creating answer:', error);
+      throw error;
+    }
+  }, []);
+
+  // Cleanup
+  const cleanup = useCallback(() => {
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+  }, []);
+
+  return {
+    initPeerConnection,
+    createOffer,
+    createAnswer,
+    sendMessage,
+    sendFile,
+    cleanup,
+    connectionState,
+    dataChannelState,
+    peerConnection: peerConnectionRef,
+    dataChannel: dataChannelRef
+  };
+};
